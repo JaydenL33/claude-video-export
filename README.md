@@ -92,6 +92,70 @@ Drop a finished audio track into the project folder and the export comes out **w
 
 ---
 
+## Generating compatible projects with Claude Design
+
+Claude Design can produce arbitrary animations — but only **Stage-based** projects are exportable here. Use one of the prompts below to make sure the artifact it generates (or rewrites) hits the exporter's contract.
+
+### Prompt — new animation projects
+
+Paste this when starting an animation in Claude Design that you intend to export later:
+
+```text
+Build this as an animated video using the `animations.jsx` Stage starter.
+
+Hard requirements (must follow for the exporter to work):
+- Call `copy_starter_component` with kind: "animations.jsx" — do not hand-roll the timeline.
+- Wrap the scene in a single <Stage> with explicit `width`, `height`, and `duration` (seconds). Pick fps via `fps` if you want anything other than 60.
+- Drive ALL motion from `useTime()` or by wrapping content in `<Sprite start={…} end={…}>`. Use Easing + interpolate() for tweens.
+- No wall-clock or non-deterministic motion anywhere:
+  - No CSS `@keyframes` / `animation` / `transition` for animated elements
+  - No `Date.now()`, `performance.now()`, `Math.random()` inside render
+  - No `setTimeout` / `setInterval` / `requestAnimationFrame` for animation timing — read time from `useTime()` instead
+- Add `data-export-hide` to any in-canvas UI (debug toggles, CC buttons, controls) so it's omitted from the export.
+- Every visual element that needs timing must live inside the Stage tree.
+
+Pure function of time = every frame must look identical on every render. If a value isn't derived from the current playhead, it can't move.
+```
+
+### Prompt — retrofit an existing project
+
+Paste this when handing Claude Design an existing animation project that needs to be made export-compatible:
+
+```text
+Audit this project for compatibility with the claude-video-export tool and rewrite anything that breaks the contract.
+
+Step 1 — Detect the current shape:
+- Does the project already use <Stage> from `animations.jsx`? If yes and all motion is driven from `useTime()` / <Sprite>, you're done — the exporter auto-upgrades animations.jsx at serve time, no edits needed.
+- If it uses raw CSS @keyframes, GSAP, Lottie, Framer Motion, plain <video>, or any time source other than the Stage timeline, it must be rebuilt on Stage.
+
+Step 2 — Migration (only if Step 1 found violations):
+- Replace the current animation root with <Stage width={…} height={…} duration={…}>.
+- Convert every animated element to either:
+  (a) live inside a <Sprite start end> window, or
+  (b) read its current value from `useTime()` and Easing/interpolate().
+- Replace CSS @keyframes rules with `useTime()`-driven inline styles or transforms.
+- Replace `setTimeout` / `setInterval`-based scene transitions with <Sprite start end> windows.
+- Strip `Math.random()`, `Date.now()`, `performance.now()` from render — derive any "random-looking" motion from a seeded function of time.
+- Add `data-export-hide` to any UI chrome that shouldn't appear in the export.
+
+Step 3 — Verify:
+- Total duration of all <Sprite> end times ≤ Stage `duration`.
+- Scrubbing the Stage playhead to any time t produces a deterministic frame (refresh = same pixels).
+```
+
+### Quick sanity check before exporting
+
+Open the project in a browser, navigate to its HTML with `?__render=1` appended (e.g. `index.html?__render=1`), and in the devtools console run:
+
+```js
+window.__videoMeta   // → { width, height, duration, fps }  if export-ready
+window.__seek(2.5)   // → jumps to t=2.5s; should land on a reproducible frame
+```
+
+If both work, the exporter will accept it. If `__videoMeta` is `undefined`, the project isn't Stage-based yet — re-run the retrofit prompt.
+
+---
+
 ## Project layout
 
 ```
