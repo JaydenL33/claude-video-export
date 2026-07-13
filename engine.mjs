@@ -162,19 +162,33 @@ async function launchBrowser() {
   throw lastErr;
 }
 
-function targetDims(meta, res) {
+const OUTPUT_DIMS = {
+  '4k': {
+    '16:9': { w: 3840, h: 2160 },
+    '9:16': { w: 2160, h: 3840 },
+    '1:1': { w: 2160, h: 2160 },
+  },
+  '1080p': {
+    '16:9': { w: 1920, h: 1080 },
+    '9:16': { w: 1080, h: 1920 },
+    '1:1': { w: 1080, h: 1080 },
+  },
+};
+
+function targetDims(meta, res, aspect = 'native') {
   if (res && typeof res === 'object' && res.width && res.height) return { w: res.width, h: res.height };
+  if (OUTPUT_DIMS[res] && OUTPUT_DIMS[res][aspect]) return OUTPUT_DIMS[res][aspect];
   const even = (n) => Math.round(n / 2) * 2;
-  const aspect = meta.width / meta.height;
-  if (res === '1080p') { const h = 1080; return { w: even(h * aspect), h }; }
-  // '4k' (default): target 2160 tall, width by aspect (3840×2160 for 16:9)
-  const h = 2160; return { w: even(h * aspect), h };
+  const sourceAspect = meta.width / meta.height;
+  if (res === '1080p') { const h = 1080; return { w: even(h * sourceAspect), h }; }
+  // '4k' (default): target 2160 tall, width by source aspect.
+  const h = 2160; return { w: even(h * sourceAspect), h };
 }
 
 export async function exportVideo(opts) {
   const {
     projectDir, htmlFile, outPath,
-    res = '4k', fps: fpsOverride, workers = 6,
+    res = '4k', aspect = 'native', fps: fpsOverride, workers = 6,
     jpegQuality = 95, crf = 17, superSample = 2,
     audio = true,             // true = auto-detect a voiceover file; false = silent; or a relative path
     onProgress = () => {},
@@ -209,7 +223,7 @@ export async function exportVideo(opts) {
     await probe.close();
 
     fps = fpsOverride || meta.fps || 60;
-    dims = targetDims(meta, res);
+    dims = targetDims(meta, res, aspect);
     total = Math.round(meta.duration * fps);
     onProgress({ stage: 'meta', message: `${meta.width}×${meta.height} · ${meta.duration}s · ${fps}fps → ${dims.w}×${dims.h}`, meta, dims, fps, total });
 
@@ -260,7 +274,8 @@ export async function exportVideo(opts) {
   // encode (frames → H.264, muxing audio in the same pass if present)
   onProgress({ stage: 'encode', message: audioPath ? 'Encoding MP4 with audio…' : 'Encoding MP4…' });
   await new Promise((resolve, reject) => {
-    const scale = `scale=${dims.w}:${dims.h}:flags=lanczos`;
+    // Preserve the scene's proportions, then center-crop to the requested frame.
+    const scale = `scale=${dims.w}:${dims.h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${dims.w}:${dims.h}`;
     const args = ['-y', '-framerate', String(fps), '-start_number', '0', '-i', path.join(framesDir, 'f_%06d.jpg')];
     if (audioPath) args.push('-i', audioPath);
     if (audioPath && pad > 0.04) {
@@ -294,7 +309,7 @@ export async function exportVideo(opts) {
 export async function exportBatch(opts) {
   const {
     rootDir, outDir,
-    res = '4k', fps, workers = 6, audio = true,
+    res = '4k', aspect = 'native', fps, workers = 6, audio = true,
     onProgress = () => {},
   } = opts;
 
@@ -317,7 +332,7 @@ export async function exportBatch(opts) {
     onProgress({ stage: 'project-start', index: i, count, name: p.name });
     try {
       const r = await exportVideo({
-        projectDir: p.dir, htmlFile: p.html, outPath, res, fps, workers, audio,
+        projectDir: p.dir, htmlFile: p.html, outPath, res, aspect, fps, workers, audio,
         onProgress: (ev) => onProgress({ ...ev, index: i, count, name: p.name, batch: true }),
       });
       results.push({ index: i, name: p.name, file, outPath, ok: true, size: r.size, width: r.width, height: r.height, fps: r.fps, duration: r.duration, audio: r.audio });

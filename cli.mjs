@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Bonus CLI (the web app wraps the same engine):
-//   single: node cli.mjs <project-folder> [--res 4k|1080p] [--fps 60] [--out file.mp4] [--workers 6]
-//   bulk:   node cli.mjs <parent-folder> --batch [--res …] [--fps …] [--out <dir>] [--silent]
+//   single: node cli.mjs <project-folder> [--aspect 16:9|9:16|1:1] [--res 4k|1080p] [--fps 60] [--out file.mp4] [--workers 6]
+//   bulk:   node cli.mjs <parent-folder> --batch [--aspect …] [--res …] [--fps …] [--out <dir>] [--silent]
 import path from 'node:path';
 import { exportVideo, exportBatch } from './engine.mjs';
 
 const args = process.argv.slice(2);
 const dir = args.find((a) => !a.startsWith('--'));
-if (!dir) { console.error('usage: node cli.mjs <folder> [--batch] [--res 4k|1080p] [--fps 60] [--out file-or-dir] [--workers 6]'); process.exit(1); }
+if (!dir) { console.error('usage: node cli.mjs <folder> [--batch] [--aspect 16:9|9:16|1:1] [--res 4k|1080p] [--fps 60] [--out file-or-dir] [--workers 6]'); process.exit(1); }
 const get = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i + 1] : d; };
 
 const projectDir = path.resolve(dir);
@@ -17,6 +17,7 @@ if (args.includes('--batch')) {
   const outDir = path.resolve(get('out', path.join(projectDir, '__exports')));
   await exportBatch({
     rootDir: projectDir, outDir,
+    aspect: get('aspect', 'native'),
     res: get('res', '4k'),
     fps: get('fps') ? Number(get('fps')) : undefined,
     workers: Number(get('workers', 6)),
@@ -35,6 +36,7 @@ if (args.includes('--batch')) {
   const outPath = path.resolve(get('out', path.join(projectDir, 'export-4k60.mp4')));
   await exportVideo({
     projectDir, outPath,
+    aspect: get('aspect', 'native'),
     res: get('res', '4k'),
     fps: get('fps') ? Number(get('fps')) : undefined,
     workers: Number(get('workers', 6)),

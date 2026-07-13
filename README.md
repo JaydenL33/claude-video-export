@@ -1,6 +1,6 @@
 # Claude Video Export
 
-> Export Claude Design and Claude Artifact animations to **4K / 60fps H.264 MP4** — frame-accurate, headless, zero per-project scripting.
+> Export Claude Design and Claude Artifact animations to **4K / 60fps H.264 MP4** in 16:9, 9:16, or 1:1 — frame-accurate, headless, zero per-project scripting.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
@@ -8,9 +8,15 @@
 [![ffmpeg](https://img.shields.io/badge/ffmpeg-bundled-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-Drag a **Stage-based** Claude design project folder in, get a silent **4K / 60fps H.264 MP4** out. No manual ffmpeg, no per-project scripting.
+Drag a **Stage-based** Claude design project folder in, choose a frame shape, and get a silent **4K / 60fps H.264 MP4** out. No manual ffmpeg, no per-project scripting.
 
 It renders every frame deterministically in headless Chromium at 2× (true supersampled 4K) and encodes with a bundled ffmpeg.
+
+## Fork notes
+
+This is a fork of [Claude Video Export by Dawood Trumboo](https://github.com/dawoodtrumboo/claude-video-export). I've made this fork more like [claude2video.com](https://claude2video.com/) with a simpler browser-first workflow and social-ready aspect-ratio exports. Claude2Video is an inspiration for this fork; this project is not affiliated with Claude2Video or Anthropic.
+
+Please keep credit for the original author and the upstream project when redistributing this fork. The MIT license remains in effect; see [LICENSE](LICENSE).
 
 ---
 
@@ -60,26 +66,28 @@ Open <http://localhost:4747> — the drag-and-drop UI should load.
 npm start          # → http://localhost:4747
 ```
 
-Open the page, **drop your project folder**, pick **4K/60** (or 1080p/30), and download the MP4 when it finishes. Progress (frames rendered, fps, ETA, encode) streams live.
+Open the page, **drop your project folder**, pick **4K/60**, choose **16:9**, **9:16**, or **1:1**, and download the MP4 when it finishes. The selected ratio is rendered with a centered crop that preserves the animation's proportions. Progress (frames rendered, fps, ETA, encode) streams live.
 
 ## Use — command line
 
 ```bash
-node cli.mjs "/path/to/My Project" --res 4k --fps 60 --out trailer.mp4
+node cli.mjs "/path/to/My Project" --aspect 16:9 --res 4k --fps 60 --out trailer.mp4
 ```
 
-Flags: `--res 4k|1080p` · `--fps 60|30` · `--out file.mp4` · `--workers 6`
+Flags: `--aspect 16:9|9:16|1:1` · `--res 4k|1080p` · `--fps 60|30` · `--out file.mp4` · `--workers 6`
+
+`4K` outputs are `3840×2160` (16:9), `2160×3840` (9:16), or `2160×2160` (1:1). `1080p` uses the corresponding `1920×1080`, `1080×1920`, or `1080×1080` sizes. The CLI keeps its legacy native-aspect behavior when `--aspect` is omitted.
 
 ## Bulk import (many projects at once)
 
-Flip the **Single project / Bulk import** toggle on the page, then drop a **parent folder** containing several project subfolders (or drop multiple project folders together). Each Stage-based project becomes its own MP4 — with a live per-project progress list, a download per video, and a **Download all (.zip)** button. Settings (resolution / fps / voiceover) apply to the whole batch; each project's own `voiceover.*` is auto-muxed.
+Flip the **Single project / Bulk import** toggle on the page, then drop a **parent folder** containing several project subfolders (or drop multiple project folders together). Each Stage-based project becomes its own MP4 — with a live per-project progress list, a download per video, and a **Download all (.zip)** button. Settings (aspect ratio / resolution / fps / voiceover) apply to the whole batch; each project's own `voiceover.*` is auto-muxed.
 
 Projects render **sequentially** (each still uses parallel workers internally), and one failing project never aborts the rest.
 
 CLI equivalent:
 
 ```bash
-node cli.mjs "/path/to/parent-of-projects" --batch --res 4k --fps 60 [--out <dir>] [--silent]
+node cli.mjs "/path/to/parent-of-projects" --batch --aspect 9:16 --res 4k --fps 60 [--out <dir>] [--silent]
 ```
 
 Outputs one `<project-folder>.mp4` per project into `<out>` (default `<parent>/__exports`).
@@ -91,6 +99,7 @@ Outputs one `<project-folder>.mp4` per project into `<out>` (default `<parent>/_
 - The animation must be a **pure function of time** — i.e. built on the `animations.jsx` `<Stage>` starter (which all Claude "video" artifacts use). Every frame is produced by seeking the timeline, so there are **no dropped frames**.
 - Your project's `animations.jsx` is **auto-upgraded** at serve time to the export-ready version in `starter/animations.jsx` (adds a chrome-free `?__render=1` mode and exposes `window.__seek` / `window.__videoMeta`). Existing projects need **no edits**.
 - Canvas size, duration, and fps are read automatically from `<Stage>`.
+- The optional output aspect ratio uses a centered cover crop, so the animation is never stretched. Use `16:9`, `9:16`, or `1:1` in the web UI or with the CLI `--aspect` flag.
 
 ### Voiceover / audio
 
@@ -215,6 +224,9 @@ You skipped `npx playwright install chromium`. Run it now.
 
 **Output video has skips, jitter, or random elements moving**
 The project is using wall-clock motion (CSS `@keyframes`, `Date.now()`, `Math.random()`, `requestAnimationFrame` deltas) instead of `useTime()`. Frames must be a pure function of time — see *Authoring tips* above.
+
+**Important content is missing in a different aspect ratio**
+The exporter preserves proportions by center-cropping the source canvas to the selected output ratio. Keep important content near the center of the Stage, or author a composition with the target ratio when a different crop is not acceptable.
 
 **Audio cuts off / isn't included**
 Check the filename — it must match `voiceover.*` / `narration.*` / `*mix*` and be one of `.mp3 .wav .m4a .aac .ogg .flac`. Toggle the **Voiceover: Include** option in the UI / drop `audio:true` in the CLI flags.

@@ -86,6 +86,29 @@
   .brow .bdl a{color:var(--accent); text-decoration:none; font-family:var(--mono); font-size:11px; font-weight:700}
   .brow.ok .bst{color:var(--ok)}
   .brow.err .bst{color:#ff7a6b}
+
+  /* --- zip / html-picker modal --- */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:200;padding:20px}
+  .modal-overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px 28px;width:min(520px,100%);max-height:80vh;overflow-y:auto}
+  .modal h2{font-size:15px;font-weight:700;margin:0 0 4px;letter-spacing:-.01em}
+  .modal .mdesc{font-size:13px;color:var(--ink2);margin:0 0 18px;line-height:1.5}
+  .mfile{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid var(--line);border-radius:10px;cursor:pointer;margin-bottom:8px;transition:border-color .14s,background .14s}
+  .mfile:hover{border-color:rgba(255,100,51,.45);background:rgba(255,100,51,.05)}
+  .mfile.selected{border-color:var(--accent);background:rgba(255,100,51,.09)}
+  .mfile input[type=radio]{accent-color:var(--accent);width:16px;height:16px;flex-shrink:0;cursor:pointer}
+  .mfile span{font-size:13px;font-weight:500;word-break:break-all;line-height:1.4}
+  .mactions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+  .mbtn{padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);transition:background .14s,opacity .14s;font-family:var(--sans)}
+  .mbtn:hover{background:rgba(255,255,255,.07)}
+  .mbtn.primary{background:var(--ink);color:#0b0f12;border-color:var(--ink)}
+  .mbtn.primary:hover{background:var(--ink2);border-color:var(--ink2)}
+  .mbtn.primary:disabled{opacity:.4;cursor:default}
+  .drop-actions{display:flex;align-items:center;gap:8px;margin-top:12px;justify-content:center;flex-wrap:wrap}
+  .drop-btn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:var(--ink2);border-radius:8px;
+    padding:7px 16px;font-family:var(--mono);font-size:12px;cursor:pointer;transition:all .14s;letter-spacing:.02em}
+  .drop-btn:hover{background:rgba(255,100,51,.12);border-color:rgba(255,100,51,.5);color:var(--ink)}
+  .drop-or{color:var(--faint);font-size:12px;font-family:var(--mono)}
 </style>
 </head>
 <body>
@@ -105,12 +128,17 @@
 
   <div class="drop" id="drop">
     <input id="picker" type="file" webkitdirectory directory multiple hidden>
+    <input id="zip-picker" type="file" accept=".zip" hidden>
     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ff6433" stroke-width="1.5">
       <path d="M12 16V4m0 0L7 9m5-5l5 5" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round"/>
     </svg>
-    <div class="big">Drop a project folder here</div>
-    <div class="small">or click to choose · folder must contain the .html + animations.jsx</div>
+    <div class="big" id="drop-big">Drop a project folder or .zip here</div>
+    <div class="drop-actions" id="drop-actions">
+      <button class="drop-btn" id="browse-folder">Browse folder</button>
+      <span class="drop-or">or</span>
+      <button class="drop-btn" id="browse-zip">Browse .zip file</button>
+    </div>
   </div>
 
   <div class="opts">
@@ -119,6 +147,14 @@
       <div class="seg" id="seg-res">
         <button data-v="4k" class="on">4K</button>
         <button data-v="1080p">1080p</button>
+      </div>
+    </div>
+    <div class="opt">
+      <label>Aspect ratio</label>
+      <div class="seg" id="seg-aspect">
+        <button data-v="16:9" class="on">16:9</button>
+        <button data-v="9:16">9:16</button>
+        <button data-v="1:1">1:1</button>
       </div>
     </div>
     <div class="opt">
@@ -170,6 +206,19 @@
     <div class="err" id="berr"></div>
   </div>
 
+  <!-- HTML file picker modal (shown after zip upload) -->
+  <div class="modal-overlay" id="html-modal">
+    <div class="modal">
+      <h2 id="modal-title">Pick a file to export</h2>
+      <p class="mdesc" id="modal-desc"></p>
+      <div id="modal-files"></div>
+      <div class="mactions">
+        <button class="mbtn" id="modal-cancel">Cancel</button>
+        <button class="mbtn primary" id="modal-start" disabled>Start render</button>
+      </div>
+    </div>
+  </div>
+
   <div class="foot">
     Not exporting? The project needs the <code>animations.jsx</code> <code>&lt;Stage&gt;</code> starter (it's auto-upgraded for export). Non-deterministic CSS <code>@keyframes</code> won't capture frame-perfectly.
   </div>
@@ -177,12 +226,15 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let RES = '4k', FPS = '60', AUDIO = 'on';
-for (const seg of ['seg-res','seg-fps','seg-audio']) {
+let RES = '4k', ASPECT = '16:9', FPS = '60', AUDIO = 'on';
+for (const seg of ['seg-res','seg-aspect','seg-fps','seg-audio']) {
   $(seg).addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
     [...$(seg).children].forEach(x => x.classList.remove('on')); b.classList.add('on');
-    if (seg === 'seg-res') RES = b.dataset.v; else if (seg === 'seg-fps') FPS = b.dataset.v; else AUDIO = b.dataset.v;
+    if (seg === 'seg-res') RES = b.dataset.v;
+    else if (seg === 'seg-aspect') ASPECT = b.dataset.v;
+    else if (seg === 'seg-fps') FPS = b.dataset.v;
+    else AUDIO = b.dataset.v;
   });
 }
 
@@ -190,22 +242,36 @@ let MODE = 'single';
 $('seg-mode').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   [...$('seg-mode').children].forEach(x => x.classList.remove('on')); b.classList.add('on'); MODE = b.dataset.v;
-  $('drop').querySelector('.big').textContent = MODE === 'bulk' ? 'Drop a folder of projects here' : 'Drop a project folder here';
-  $('drop').querySelector('.small').textContent = MODE === 'bulk' ? 'or click to choose · each subfolder = one video' : 'or click to choose · folder must contain the .html + animations.jsx';
+  $('drop').querySelector('.big').textContent = MODE === 'bulk' ? 'Drop a folder of projects here' : 'Drop a project folder or .zip here';
+  $('browse-zip').style.display = MODE === 'bulk' ? 'none' : '';
+  $('drop-actions').querySelector('.drop-or').style.display = MODE === 'bulk' ? 'none' : '';
   $('panel').classList.remove('show'); $('batch').classList.remove('show');
 });
 function start(files){ return MODE === 'bulk' ? runBatch(files) : run(files); }
 
-const drop = $('drop'), picker = $('picker');
-drop.addEventListener('click', () => picker.click());
+const drop = $('drop'), picker = $('picker'), zipPicker = $('zip-picker');
+
+$('browse-folder').addEventListener('click', (e) => { e.stopPropagation(); picker.click(); });
+$('browse-zip').addEventListener('click', (e) => { e.stopPropagation(); zipPicker.click(); });
+
 picker.addEventListener('change', () => {
   const files = [...picker.files].map(f => ({ file: f, path: f.webkitRelativePath || f.name }));
   if (files.length) start(files);
+  picker.value = '';
+});
+zipPicker.addEventListener('change', () => {
+  if (zipPicker.files[0]) handleZip(zipPicker.files[0]);
+  zipPicker.value = '';
 });
 ['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); if (ev==='dragleave') drop.classList.remove('over'); }));
 drop.addEventListener('drop', async (e) => {
   e.preventDefault(); drop.classList.remove('over');
+  // Check for a single .zip file drop
+  const dtFiles = e.dataTransfer.files;
+  if (dtFiles.length === 1 && dtFiles[0].name.toLowerCase().endsWith('.zip')) {
+    return handleZip(dtFiles[0]);
+  }
   const items = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
   if (items.length) { const files = []; for (const it of items) await walk(it, '', files); if (files.length) start(files); }
 });
@@ -217,6 +283,80 @@ async function walk(entry, prefix, out){
 
 function newJob(){ return 'j' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 function show(stage){ $('panel').classList.add('show'); $('stage').textContent = stage; }
+
+// ---- zip upload + HTML picker modal ----
+async function handleZip(file) {
+  const job = newJob();
+  $('panel').classList.remove('show'); $('batch').classList.remove('show');
+  show('Uploading .zip…'); $('fill').style.width='0%'; $('pct').textContent='0%'; $('frames').textContent='';
+  $('done').classList.remove('show'); $('err').textContent='';
+  let resp, data;
+  try {
+    resp = await fetch('/upload-zip/' + job, { method: 'POST', body: file });
+    data = await resp.json();
+  } catch(e) { show('Failed'); $('err').textContent = 'Upload error: ' + e.message; return; }
+  if (!resp.ok || !data.files) { show('Failed'); $('err').textContent = data.error || 'Zip extraction failed'; return; }
+  if (!data.files.length) { show('Failed'); $('err').textContent = 'No HTML files found in the zip'; return; }
+  $('panel').classList.remove('show');
+  showHtmlModal(job, file.name, data.files);
+}
+
+function showHtmlModal(job, zipName, files) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  $('modal-title').textContent = 'Pick a file to export';
+  $('modal-desc').textContent = zipName + ' contains ' + files.length + ' HTML file' + (files.length > 1 ? 's' : '') + '. Pick the one you want to export.';
+  let selected = files.length === 1 ? files[0] : null;
+  $('modal-files').innerHTML = files.map((f, i) =>
+    `<label class="mfile${files.length===1?' selected':''}" id="mf${i}">
+      <input type="radio" name="htmlfile" value="${esc(f)}"${files.length===1?' checked':''}>
+      <span>${esc(f)}</span>
+    </label>`
+  ).join('');
+  $('modal-start').disabled = !selected;
+  $('modal-files').addEventListener('change', (e) => {
+    if (e.target.name === 'htmlfile') {
+      selected = e.target.value;
+      [...$('modal-files').querySelectorAll('.mfile')].forEach(el => el.classList.toggle('selected', el.contains(e.target)));
+      $('modal-start').disabled = false;
+    }
+  });
+  const close = () => $('html-modal').classList.remove('show');
+  $('modal-cancel').onclick = close;
+  $('html-modal').addEventListener('click', (e) => { if (e.target === $('html-modal')) close(); }, { once: false });
+  $('modal-start').onclick = () => { close(); startRender(job, selected); };
+  $('html-modal').classList.add('show');
+}
+
+async function startRender(job, htmlFile) {
+  $('done').classList.remove('show'); $('err').textContent=''; $('fill').style.width='0%'; $('pct').textContent='0%';
+  $('frames').textContent=''; $('rate').textContent=''; $('eta').textContent=''; $('meta').textContent='';
+  show('Preparing render…');
+  await fetch('/start/' + job, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ html: htmlFile, res: RES, aspect: ASPECT, fps: FPS, audio: AUDIO === 'on' }) });
+  const es = new EventSource('/progress/' + job);
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.stage === 'meta') { $('meta').textContent = ev.meta ? `${ev.meta.width}×${ev.meta.height} · ${ev.meta.duration}s` : ''; show('Rendering frames…'); }
+    else if (ev.stage === 'launch') show('Starting browser…');
+    else if (ev.stage === 'capture') {
+      const p = Math.round(ev.done/ev.total*100);
+      $('fill').style.width = p + '%'; $('pct').textContent = p + '%';
+      $('frames').textContent = `${ev.done}/${ev.total} frames`;
+      $('rate').textContent = ev.fps ? `${ev.fps} fps` : '';
+      $('eta').textContent = ev.eta ? `~${Math.ceil(ev.eta/60*10)/10} min left` : '';
+      show('Rendering frames…');
+    }
+    else if (ev.stage === 'audio') { $('meta').textContent += '  ·  ♪ ' + ev.audio; }
+    else if (ev.stage === 'encode') { show(ev.message || 'Encoding MP4…'); $('fill').style.width='100%'; $('pct').textContent='100%'; $('eta').textContent=''; }
+    else if (ev.stage === 'done' && ev.download) {
+      es.close(); show('Done');
+      const suffix = `${ASPECT.replace(':', 'x')}-${FPS}fps`;
+      $('dl').href = ev.download; $('dl').setAttribute('download',`export-${suffix}.mp4`);
+      $('outmeta').textContent = `${ev.width}×${ev.height} · ${ASPECT} · ${ev.fps}fps · ${(ev.size/1048576).toFixed(1)} MB${ev.audio ? ' · ♪ '+ev.audio : ''}`;
+      $('done').classList.add('show');
+    }
+    else if (ev.stage === 'error') { es.close(); show('Failed'); $('err').textContent = ev.message; }
+  };
+}
 
 async function run(files){
   const job = newJob();
@@ -232,7 +372,7 @@ async function run(files){
   }
   // start export
   show('Preparing render…'); $('fill').style.width='0%'; $('pct').textContent='0%'; $('frames').textContent='';
-  await fetch('/start/' + job, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ res: RES, fps: FPS, audio: AUDIO === 'on' }) });
+  await fetch('/start/' + job, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ res: RES, aspect: ASPECT, fps: FPS, audio: AUDIO === 'on' }) });
   // stream progress
   const es = new EventSource('/progress/' + job);
   es.onmessage = (m) => {
@@ -272,7 +412,7 @@ async function runBatch(files){
     n++; $('bfill').style.width=Math.round(n/files.length*100)+'%'; $('bover').textContent=`${n}/${files.length} files`;
   }
   $('bstage').textContent='Finding projects…'; $('bfill').style.width='0%'; $('bover').textContent='';
-  await fetch('/start-batch/'+job, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ res:RES, fps:FPS, audio:AUDIO==='on' }) });
+  await fetch('/start-batch/'+job, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ res:RES, aspect:ASPECT, fps:FPS, audio:AUDIO==='on' }) });
   let count=0, doneCount=0, curFrac=0;
   const overall=()=>{ const ov=count?Math.round((doneCount+curFrac)/count*100):0; $('bfill').style.width=ov+'%'; $('bover').textContent=`${doneCount}/${count} done`; };
   const row=(i)=>$('bp'+i);

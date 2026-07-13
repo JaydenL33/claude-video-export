@@ -6,9 +6,44 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { exportVideo, exportBatch, findMainHtml } from './engine.mjs';
+
+// Pure-JS ZIP extractor — no system unzip needed. Handles stored + deflate.
+function extractZip(buf, destDir) {
+  const v = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0; i--) {
+    if (v.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid ZIP archive');
+  const cdCount = v.getUint16(eocd + 10, true);
+  let pos = v.getUint32(eocd + 16, true);
+  for (let i = 0; i < cdCount; i++) {
+    if (v.getUint32(pos, true) !== 0x02014b50) break;
+    const method = v.getUint16(pos + 10, true);
+    const cSize  = v.getUint32(pos + 20, true);
+    const fnLen  = v.getUint16(pos + 28, true);
+    const exLen  = v.getUint16(pos + 30, true);
+    const cmLen  = v.getUint16(pos + 32, true);
+    const lhOff  = v.getUint32(pos + 42, true);
+    const name   = buf.slice(pos + 46, pos + 46 + fnLen).toString('utf8');
+    pos += 46 + fnLen + exLen + cmLen;
+    if (name.endsWith('/')) continue;
+    const lhFnLen = v.getUint16(lhOff + 26, true);
+    const lhExLen = v.getUint16(lhOff + 28, true);
+    const dataOff = lhOff + 30 + lhFnLen + lhExLen;
+    const compressed = buf.slice(dataOff, dataOff + cSize);
+    const fileData = method === 0 ? compressed : zlib.inflateRawSync(compressed);
+    const safe = path.normalize(name).replace(/^(\.\.[\\/])+/, '');
+    const dest = path.join(destDir, safe);
+    if (!dest.startsWith(destDir + path.sep)) continue; // path-traversal guard
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, fileData);
+  }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -59,7 +94,26 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
-    // --- POST /start/:job  { res, fps, html } ---
+    // --- POST /upload-zip/:job  (raw body = .zip, extracts and returns HTML file list) ---
+    if (req.method === 'POST' && parts[0] === 'upload-zip' && parts[1]) {
+      const job = parts[1];
+      const projectDir = path.join(WORK, job, 'project');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const zipBuf = await readBody(req);
+      try { extractZip(zipBuf, projectDir); }
+      catch (e) { return send(res, 400, { error: 'Zip extraction failed: ' + e.message }); }
+      const htmlFiles = [];
+      (function walk(d) {
+        for (const name of fs.readdirSync(d)) {
+          const fp = path.join(d, name);
+          if (fs.statSync(fp).isDirectory()) { if (!/node_modules|__export|\.git/.test(name)) walk(fp); }
+          else if (/\.html?$/i.test(name)) htmlFiles.push(path.relative(projectDir, fp));
+        }
+      })(projectDir);
+      return send(res, 200, { job, files: htmlFiles });
+    }
+
+    // --- POST /start/:job  { res, aspect, fps, html } ---
     if (req.method === 'POST' && parts[0] === 'start' && parts[1]) {
       const job = parts[1];
       const cfg = JSON.parse((await readBody(req)).toString() || '{}');
@@ -71,7 +125,7 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, { ok: true });
       exportVideo({
         projectDir, htmlFile: cfg.html || undefined, outPath,
-        res: cfg.res || '4k', fps: cfg.fps ? Number(cfg.fps) : undefined,
+        res: cfg.res || '4k', aspect: cfg.aspect || '16:9', fps: cfg.fps ? Number(cfg.fps) : undefined,
         workers: cfg.workers ? Number(cfg.workers) : 6,
         audio: cfg.audio !== false,
         onProgress: (ev) => pushProgress(J, ev),
@@ -80,7 +134,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // --- POST /start-batch/:job  { res, fps, audio }  (bulk: one video per project) ---
+    // --- POST /start-batch/:job  { res, aspect, fps, audio }  (bulk: one video per project) ---
     if (req.method === 'POST' && parts[0] === 'start-batch' && parts[1]) {
       const job = parts[1];
       const cfg = JSON.parse((await readBody(req)).toString() || '{}');
@@ -92,7 +146,7 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, { ok: true });
       exportBatch({
         rootDir: projectDir, outDir,
-        res: cfg.res || '4k', fps: cfg.fps ? Number(cfg.fps) : undefined,
+        res: cfg.res || '4k', aspect: cfg.aspect || '16:9', fps: cfg.fps ? Number(cfg.fps) : undefined,
         workers: cfg.workers ? Number(cfg.workers) : 6,
         audio: cfg.audio !== false,
         onProgress: (ev) => {
